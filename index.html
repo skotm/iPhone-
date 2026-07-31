@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iPhone モックアップ作成ツール</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      background: #f4f4f4;
+      color: #333;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      background: #fff;
+      padding: 12px;
+      border: 1px solid #ccc;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #ccc;
+      background: #fff;
+    }
+    .result-area {
+      text-align: center;
+      max-width: 100%;
+    }
+    .result-area img {
+      max-width: 100%;
+      border: 1px solid #ccc;
+      display: none;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>iPhone モックアップジェネレーター</h2>
+
+  <div class="controls">
+    <label>
+      画像選択: 
+      <input type="file" id="imageInput" accept="image/*">
+    </label>
+
+    <label>
+      背景色: 
+      <input type="color" id="bgColor" value="#ffffff">
+    </label>
+
+    <label>
+      フィット: 
+      <select id="fitMode">
+        <option value="cover">拡大して埋める (Cover)</option>
+        <option value="contain">全体を収める (Contain)</option>
+      </select>
+    </label>
+
+    <label>
+      ステータスバー:
+      <input type="checkbox" id="showStatus" checked>
+    </label>
+
+    <button id="downloadBtn">PNGで保存</button>
+  </div>
+
+  <canvas id="canvas" width="1000" height="1000"></canvas>
+
+  <div class="result-area">
+    <p id="saveHint" style="display:none; font-size: 13px; color: #666;">
+      ※保存が始まらない場合は、下の画像を長押し／右クリックで保存してください。
+    </p>
+    <img id="resultImg" alt="生成画像">
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const imageInput = document.getElementById('imageInput');
+    const bgColorInput = document.getElementById('bgColor');
+    const fitModeInput = document.getElementById('fitMode');
+    const showStatusInput = document.getElementById('showStatus');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const resultImg = document.getElementById('resultImg');
+    const saveHint = document.getElementById('saveHint');
+
+    let loadedImage = null;
+
+    // 角丸四角形を描画する汎用関数
+    function drawRoundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    // 描画処理
+    function render() {
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // 1. キャンバス背景
+      ctx.fillStyle = bgColorInput.value;
+      ctx.fillRect(0, 0, w, h);
+
+      // iPhoneの寸法定義
+      const phoneW = 370;
+      const phoneH = 760;
+      const phoneX = (w - phoneW) / 2;
+      const phoneY = (h - phoneH) / 2;
+      const outerRadius = 48;
+
+      const bezel = 9; // スリムなベゼル
+      const screenX = phoneX + bezel;
+      const screenY = phoneY + bezel;
+      const screenW = phoneW - (bezel * 2);
+      const screenH = phoneH - (bezel * 2);
+      const screenRadius = 40;
+
+      // 2. サイドボタンを描画
+      ctx.fillStyle = '#2c2c2e';
+      drawRoundRect(phoneX - 3, phoneY + 105, 3, 24, 1.5); ctx.fill(); // マナー
+      drawRoundRect(phoneX - 3, phoneY + 145, 3, 44, 1.5); ctx.fill(); // 音量+
+      drawRoundRect(phoneX - 3, phoneY + 198, 3, 44, 1.5); ctx.fill(); // 音量-
+      drawRoundRect(phoneX + phoneW, phoneY + 155, 3, 62, 1.5); ctx.fill(); // 電源
+
+      // 3. iPhone本体のドロップシャドウ（影）
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.15)';
+      ctx.shadowBlur = 25;
+      ctx.shadowOffsetY = 12;
+      drawRoundRect(phoneX, phoneY, phoneW, phoneH, outerRadius);
+      ctx.fillStyle = '#1c1c1e';
+      ctx.fill();
+      ctx.restore();
+
+      // 4. 外枠のエッジ線
+      drawRoundRect(phoneX, phoneY, phoneW, phoneH, outerRadius);
+      ctx.strokeStyle = '#3a3a3c';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 5. 画面領域（くり抜いて画像描画）
+      ctx.save();
+      drawRoundRect(screenX, screenY, screenW, screenH, screenRadius);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.clip();
+
+      if (loadedImage) {
+        const imgW = loadedImage.width;
+        const imgH = loadedImage.height;
+        const mode = fitModeInput.value;
+
+        let drawW, drawH;
+        const imgRatio = imgW / imgH;
+        const screenRatio = screenW / screenH;
+
+        if (mode === 'cover') {
+          if (imgRatio > screenRatio) {
+            drawH = screenH;
+            drawW = screenH * imgRatio;
+          } else {
+            drawW = screenW;
+            drawH = screenW / imgRatio;
+          }
+        } else { // contain
+          if (imgRatio > screenRatio) {
+            drawW = screenW;
+            drawH = screenW / imgRatio;
+          } else {
+            drawH = screenH;
+            drawW = screenH * imgRatio;
+          }
+        }
+
+        const drawX = screenX + (screenW - drawW) / 2;
+        const drawY = screenY + (screenH - drawH) / 2;
+
+        ctx.drawImage(loadedImage, drawX, drawY, drawW, drawH);
+      }
+
+      // 6. ステータスバー (9:41 と アイコン)
+      if (showStatusInput.checked) {
+        ctx.fillStyle = '#000000';
+        ctx.font = '600 13px sans-serif';
+        ctx.fillText('9:41', screenX + 28, screenY + 23);
+
+        // バッテリー・Wi-Fi等のピクト簡易描画
+        const iconX = screenX + screenW - 62;
+        const iconY = screenY + 13;
+        
+        // アンテナ
+        for (let i = 0; i < 4; i++) {
+          ctx.fillRect(iconX + i * 4, iconY + (8 - (i * 2)), 2.5, i * 2 + 2);
+        }
+        // バッテリー枠
+        ctx.strokeRect(iconX + 22, iconY + 1, 16, 8);
+        ctx.fillRect(iconX + 24, iconY + 3, 10, 4);
+      }
+
+      // 7. Dynamic Island
+      const islandW = 86;
+      const islandH = 22;
+      const islandX = phoneX + (phoneW - islandW) / 2;
+      const islandY = screenY + 10;
+      drawRoundRect(islandX, islandY, islandW, islandH, 11);
+      ctx.fillStyle = '#000000';
+      ctx.fill();
+
+      // 8. ホームバー (画面下部)
+      const barW = 110;
+      const barH = 4;
+      const barX = phoneX + (phoneW - barW) / 2;
+      const barY = screenY + screenH - 10;
+      drawRoundRect(barX, barY, barW, barH, 2);
+      ctx.fillStyle = '#000000';
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // イベントリスナー
+    imageInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const img = new Image();
+        img.onload = () => {
+          loadedImage = img;
+          render();
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    bgColorInput.addEventListener('input', render);
+    fitModeInput.addEventListener('change', render);
+    showStatusInput.addEventListener('change', render);
+
+    // 画像保存処理（堅牢化）
+    downloadBtn.addEventListener('click', () => {
+      // 1. プレビュー用imgタグに設定（長押し/右クリック保存用）
+      const dataUrl = canvas.toDataURL('image/png');
+      resultImg.src = dataUrl;
+      resultImg.style.display = 'inline-block';
+      saveHint.style.display = 'block';
+
+      // 2. Blobを作成して自動ダウンロードを試行
+      try {
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'iphone-mockup.png';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, 'image/png');
+      } catch (e) {
+        console.error('Download error:', e);
+      }
+    });
+
+    // 初期描画
+    render();
+  </script>
+</body>
+</html>
